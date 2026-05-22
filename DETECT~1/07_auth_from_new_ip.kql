@@ -1,0 +1,42 @@
+// ============================================================
+// RULE 07 — Authentication From a Previously Unseen IP Address
+// MITRE: T1078 (Valid Accounts) | Severity: Medium
+//
+// Compares each user's authentication source IPs over the
+// trailing 30 days.  Flags any sign-in from an IP that has
+// never appeared for that user before.
+//
+// Note: Octopus only surfaces IpAddress on login/auth events.
+// Filter to those event types to keep the baseline clean.
+// ============================================================
+
+let LookbackDays = 30d;
+let AuthEvents   = dynamic(["UserLoggedIn", "UserAuthenticationSucceeded", "UserLoggedInWithSso"]);
+
+// Baseline: known IPs per user from the last 30 days (excl. last hour)
+let KnownIPs = OctopusAuditEvents_CL
+    | where TimeGenerated between (ago(LookbackDays) .. ago(1h))
+    | where EventType in~ (AuthEvents) and isnotempty(IpAddress)
+    | summarize KnownIPSet = make_set(IpAddress, 500) by Username;
+
+// Recent auth events (last hour)
+let RecentAuth = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(1h)
+    | where EventType in~ (AuthEvents) and isnotempty(IpAddress)
+    | project TimeGenerated, Username, IpAddress, SpaceId, EventType;
+
+RecentAuth
+| join kind=leftouter (KnownIPs) on Username
+| extend IsNewIP = isempty(KnownIPSet) or not(set_has_element(KnownIPSet, IpAddress))
+| where IsNewIP
+| project
+    TimeGenerated,
+    Username,
+    NewSourceIP    = IpAddress,
+    EventType,
+    SpaceId,
+    FirstSeenEver  = isempty(KnownIPSet),
+    AlertName      = "User authenticated from a previously unseen IP address",
+    Severity       = iff(isempty(KnownIPSet), "High", "Medium"),
+    MitreTechnique = "T1078"
+| sort by TimeGenerated desc

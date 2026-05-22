@@ -1,0 +1,52 @@
+// ============================================================
+// RULE 06 — Critical Configuration Tampering
+// MITRE: T1562 (Impair Defenses) / T1485 (Data Destruction) | Severity: High
+//
+// Detects modification of high-impact Octopus configuration:
+//   • Environment added/deleted
+//   • Variable set modified in a production environment
+//   • Deployment process step removed or reordered
+//   • Lifecycle or retention policy changed
+//   • Worker or Tentacle target added to a sensitive environment
+//   • Team membership changed
+// ============================================================
+
+let SensitiveEventTypes = dynamic([
+    "EnvironmentCreated", "EnvironmentDeleted",
+    "VariableSetModified",
+    "DeploymentProcessModified",
+    "LifecycleCreated", "LifecycleModified", "LifecycleDeleted",
+    "MachineAdded", "MachineDeleted", "MachineModified",
+    "TeamModified", "TeamCreated", "TeamDeleted",
+    "RetentionPolicyModified",
+    "ProjectGroupCreated", "ProjectGroupDeleted"
+]);
+
+let ProdPattern = "prod|production|prd";
+
+OctopusAuditEvents_CL
+| where TimeGenerated >= ago(1d)
+| where EventType in~ (SensitiveEventTypes)
+    or (EventType has "Variable" and EnvironmentName matches regex strcat("(?i)(", ProdPattern, ")"))
+| extend
+    IsProdScope = EnvironmentName matches regex strcat("(?i)(", ProdPattern, ")"),
+    ParsedDetails = parse_json(ChangeDetails)
+| project
+    TimeGenerated,
+    Username,
+    EventType,
+    EnvironmentName,
+    ProjectName,
+    IsProdScope,
+    SpaceId,
+    ChangeDetails,
+    AlertName      = "Critical Octopus configuration change detected",
+    Severity       = iff(IsProdScope, "High", "Medium"),
+    MitreTechnique = case(
+        EventType has "Environment" or EventType has "Lifecycle" or EventType has "Retention",
+            "T1562",
+        EventType has "Variable" or EventType has "DeploymentProcess",
+            "T1485",
+        "T1072"
+    )
+| sort by TimeGenerated desc

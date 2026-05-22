@@ -1,0 +1,37 @@
+// ============================================================
+// RULE 02 — Production Deployment Outside Business Hours
+// MITRE: T1072 (Software Deployment Tools) | Severity: Medium
+//
+// Flags any deployment to a Production-tier environment that
+// starts outside Mon-Fri 06:00-20:00 UTC.  Tune the
+// environment name pattern and hour range to your org.
+// ============================================================
+
+let BusinessHourStart = 6;   // 06:00 UTC
+let BusinessHourEnd   = 20;  // 20:00 UTC
+let ProdPattern       = "prod|production|prd";  // regex, case-insensitive
+
+OctopusAuditEvents_CL
+| where TimeGenerated >= ago(1d)
+| where EventType has "Deployment" and EventType has "Started"
+| where EnvironmentName matches regex strcat("(?i)(", ProdPattern, ")")
+| extend
+    HourUTC    = hourofday(TimeGenerated),
+    DayOfWeek  = dayofweek(TimeGenerated),
+    IsWeekend  = (dayofweek(TimeGenerated) == 0d or dayofweek(TimeGenerated) == 6d),
+    IsOffHours = (hourofday(TimeGenerated) < BusinessHourStart or hourofday(TimeGenerated) >= BusinessHourEnd)
+| where IsWeekend or IsOffHours
+| project
+    TimeGenerated,
+    Username,
+    ProjectName,
+    EnvironmentName,
+    SpaceId,
+    HourUTC,
+    DayOfWeek,
+    IsWeekend,
+    IsOffHours,
+    AlertName      = "Production deployment outside business hours",
+    Severity       = "Medium",
+    MitreTechnique = "T1072"
+| sort by TimeGenerated desc

@@ -1,0 +1,15 @@
+# Azure Functions Python worker
+azure-functions==1.21.3
+
+# Azure Monitor Logs Ingestion API (DCR-based)
+azure-monitor-ingestion==1.0.4
+
+# Azure Identity (Managed Identity / DefaultAzureCredential)
+azure-identity==1.17.1
+
+# Azure Blob Storage (checkpoint manager)
+azure-storage-blob==12.21.0
+
+# HTTP client
+requests==2.32.3
+urllib3==2.2.2

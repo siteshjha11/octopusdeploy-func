@@ -1,0 +1,47 @@
+// ============================================================
+// RULE 01 — API Key Created Then Used From a New IP
+// MITRE: T1078 (Valid Accounts) | Severity: High
+//
+// Detects when an Octopus API key is created and subsequently
+// used from an IP address not seen in the prior 30 days,
+// within a 1-hour window.  Indicates possible key theft or
+// exfiltration immediately after creation.
+// ============================================================
+
+let LookbackDays   = 30d;
+let CorrelationWin = 1h;
+
+// Step 1 — API keys created in the alert window
+let NewKeys = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(1d)
+    | where EventType has "ApiKey" and EventType has "Created"
+    | project KeyCreatedAt = TimeGenerated, CreatorUsername = Username, CreatorUserId = UserId, SpaceId;
+
+// Step 2 — Known IPs per user (baseline)
+let KnownIPs = OctopusAuditEvents_CL
+    | where TimeGenerated between (ago(LookbackDays) .. ago(1h))
+    | where isnotempty(IpAddress) and IpAddress != "127.0.0.1"
+    | summarize KnownIPSet = make_set(IpAddress) by Username;
+
+// Step 3 — Auth / API events after key creation
+let RecentUsage = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(1d)
+    | where isnotempty(IpAddress)
+    | project UsedAt = TimeGenerated, Username, IpAddress;
+
+NewKeys
+| join kind=inner (RecentUsage) on $left.CreatorUsername == $right.Username
+| where UsedAt between (KeyCreatedAt .. (KeyCreatedAt + CorrelationWin))
+| join kind=leftouter (KnownIPs) on $left.CreatorUsername == $right.Username
+| extend IsNewIP = not(set_has_element(KnownIPSet, IpAddress))
+| where IsNewIP == true
+| project
+    TimeGenerated       = UsedAt,
+    Username            = CreatorUsername,
+    NewSourceIP         = IpAddress,
+    ApiKeyCreatedAt     = KeyCreatedAt,
+    SpaceId,
+    AlertName           = "API Key created and used from new IP within 1 hour",
+    Severity            = "High",
+    MitreTechnique      = "T1078"
+| sort by TimeGenerated desc

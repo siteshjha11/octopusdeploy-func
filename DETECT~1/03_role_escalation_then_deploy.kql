@@ -1,0 +1,39 @@
+// ============================================================
+// RULE 03 — Role Escalation Followed by Deployment Within 30 min
+// MITRE: T1078.004 (Valid Accounts: Cloud Accounts) | Severity: High
+//
+// Detects when a user is granted an elevated Octopus role and
+// then immediately initiates a deployment — a sign that the
+// escalation may be malicious or approval controls were bypassed.
+// ============================================================
+
+let CorrelationWin = 30m;
+
+let Escalations = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(1d)
+    | where EventType has "UserRole" and (EventType has "Added" or EventType has "Assigned")
+    | project EscalatedAt = TimeGenerated, TargetUser = Username, SpaceId, EscalationEvent = EventType;
+
+let Deployments = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(1d)
+    | where EventType has "Deployment" and EventType has "Started"
+    | project DeployedAt = TimeGenerated, DeployUser = Username, ProjectName, EnvironmentName, SpaceId;
+
+Escalations
+| join kind=inner (Deployments)
+    on $left.TargetUser == $right.DeployUser and $left.SpaceId == $right.SpaceId
+| where DeployedAt between (EscalatedAt .. (EscalatedAt + CorrelationWin))
+| extend MinutesToDeploy = datetime_diff('minute', DeployedAt, EscalatedAt)
+| project
+    TimeGenerated      = EscalatedAt,
+    Username           = TargetUser,
+    EscalationEvent,
+    DeployedAt,
+    MinutesToDeploy,
+    ProjectName,
+    EnvironmentName,
+    SpaceId,
+    AlertName          = "Role escalation followed by deployment within 30 minutes",
+    Severity           = "High",
+    MitreTechnique     = "T1078.004"
+| sort by TimeGenerated desc

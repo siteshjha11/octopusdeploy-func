@@ -1,0 +1,27 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "<YOUR_STORAGE_CONNECTION_STRING>",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+
+    "CRON_SCHEDULE": "0 */5 * * * *",
+
+    "OCTOPUS_URL": "https://<your-instance>.octopus.app",
+    "OCTOPUS_API_KEY": "API-XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "OCTOPUS_SPACE_ID": "Spaces-1",
+
+    "CHECKPOINT_STORAGE_CONNECTION": "<YOUR_STORAGE_CONNECTION_STRING>",
+    "CHECKPOINT_CONTAINER": "octopus-checkpoints",
+    "CHECKPOINT_BLOB_NAME": "last_event_id.txt",
+
+    "DCE_ENDPOINT": "https://<dce-name>.<region>.ingest.monitor.azure.com",
+    "DCR_IMMUTABLE_ID": "dcr-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "DCR_STREAM_NAME": "Custom-OctopusAuditEvents_CL",
+
+    "AZURE_TENANT_ID": "<YOUR_TENANT_ID>",
+    "AZURE_CLIENT_ID": "<YOUR_CLIENT_ID>",
+    "AZURE_CLIENT_SECRET": "<YOUR_CLIENT_SECRET>",
+
+    "APPINSIGHTS_INSTRUMENTATIONKEY": "<YOUR_APP_INSIGHTS_KEY>"
+  }
+}

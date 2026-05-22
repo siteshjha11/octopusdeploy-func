@@ -1,0 +1,43 @@
+// ============================================================
+// RULE 04 — Direct Production Deployment Without Prior Staging
+// MITRE: T1072 (Software Deployment Tools) | Severity: High
+//
+// A release deployed to Production with no deployment to a
+// Staging/UAT/Test environment in the prior 24 hours is a
+// strong indicator that change-management gates were skipped.
+// Tune StagingPattern and ProdPattern to match your env naming.
+// ============================================================
+
+let LookbackWindow = 24h;
+let StagingPattern = "stag|uat|test|qa|preprod|pre-prod";
+let ProdPattern    = "prod|production|prd";
+
+let ProdDeploys = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(1d)
+    | where EventType has "Deployment" and EventType has "Started"
+    | where EnvironmentName matches regex strcat("(?i)(", ProdPattern, ")")
+    | project ProdTime = TimeGenerated, Username, ProjectName, ProjectId, SpaceId, EnvironmentName;
+
+let StagingDeploys = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(2d)   // extra lookback for the join
+    | where EventType has "Deployment" and EventType has "Started"
+    | where EnvironmentName matches regex strcat("(?i)(", StagingPattern, ")")
+    | summarize LastStagingDeploy = max(TimeGenerated) by ProjectId, SpaceId;
+
+ProdDeploys
+| join kind=leftouter (StagingDeploys)
+    on ProjectId, SpaceId
+| extend HadRecentStaging = isnotnull(LastStagingDeploy)
+    and LastStagingDeploy >= (ProdTime - LookbackWindow)
+| where not(HadRecentStaging)
+| project
+    TimeGenerated      = ProdTime,
+    Username,
+    ProjectName,
+    EnvironmentName,
+    LastStagingDeploy,
+    SpaceId,
+    AlertName          = "Production deployment with no prior staging deployment in 24h",
+    Severity           = "High",
+    MitreTechnique     = "T1072"
+| sort by TimeGenerated desc

@@ -1,0 +1,63 @@
+// =============================================================================
+// RULE: Octopus API Key Created Then Used From New IP
+// =============================================================================
+// Severity:      High
+// MITRE Tactic:  Credential Access
+// MITRE Tech:    T1528 - Steal Application Access Token
+// Query Period:  1h
+// Run Frequency: 5m
+// Alert Threshold: > 0
+//
+// Description:
+//   Detects when an API key is created in Octopus and then used within 1 hour
+//   from an IP address that has never been seen before for that user.
+//   This pattern indicates possible key exfiltration and immediate abuse.
+// =============================================================================
+
+let LookbackDays   = 30d;
+let DetectionWindow = 1h;
+
+// Build a baseline of known IPs per user over 30 days
+let KnownUserIPs = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(LookbackDays)
+    | where isnotempty(IpAddress) and isnotempty(UserId)
+    | summarize KnownIPs = make_set(IpAddress) by UserId;
+
+// Find API key creation events in the last detection window
+let ApiKeyCreations = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(DetectionWindow)
+    | where EventType startswith "ApiKey" and EventType contains "Created"
+    | project KeyCreatedTime = TimeGenerated, UserId, Username,
+              CreatorIp = IpAddress, EventId, SpaceId;
+
+// Find any API usage events (deployments, releases, etc.) from same user
+let ApiUsage = OctopusAuditEvents_CL
+    | where TimeGenerated >= ago(DetectionWindow)
+    | where isnotempty(IpAddress)
+    | where EventCategory in ("Deployment", "Release", "Configuration")
+    | project UsageTime = TimeGenerated, UserId, UsageIp = IpAddress,
+              UsageEventType = EventType, ProjectName, EnvironmentName;
+
+ApiKeyCreations
+| join kind=inner ApiUsage on UserId
+| where UsageTime > KeyCreatedTime               // Usage after creation
+| join kind=leftouter KnownUserIPs on UserId
+| where not(set_has_element(KnownIPs, UsageIp))  // IP never seen before
+| where UsageIp != CreatorIp                     // Different IP from creator
+| project
+    TimeGenerated         = KeyCreatedTime,
+    UserId,
+    Username,
+    CreatorIp,
+    NewIp                 = UsageIp,
+    TimeDeltaMinutes      = datetime_diff('minute', UsageTime, KeyCreatedTime),
+    UsageEventType,
+    ProjectName,
+    EnvironmentName,
+    SpaceId,
+    AlertSeverity         = "High",
+    AlertName             = "Octopus API Key Created and Used From New IP"
+| extend
+    Entities = bag_pack("Username", Username, "IP", NewIp, "Project", ProjectName),
+    MitreTactic     = "Credential Access",
+    MitreTechnique  = "T1528 - Steal Application Access Token"

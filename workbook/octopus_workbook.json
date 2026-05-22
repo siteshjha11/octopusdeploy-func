@@ -1,0 +1,297 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workbookDisplayName": {
+      "type": "string",
+      "defaultValue": "Octopus Deploy — Security & Operations",
+      "metadata": { "description": "Display name for the workbook." }
+    },
+    "workbookType": {
+      "type": "string",
+      "defaultValue": "sentinel",
+      "allowedValues": ["sentinel", "workbook"]
+    },
+    "workbookSourceId": {
+      "type": "string",
+      "metadata": { "description": "Full resource ID of the Log Analytics workspace." }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    }
+  },
+  "variables": {
+    "workbookId": "[newGuid()]",
+    "serializedData": {
+      "version": "Notebook/1.0",
+      "items": [
+        {
+          "type": 1,
+          "content": {
+            "json": "# Octopus Deploy — Security & Operations\n---\nReal-time security and operational visibility over Octopus Deploy audit events ingested into Microsoft Sentinel.  \nUse the time range picker above to adjust the analysis window."
+          },
+          "name": "header"
+        },
+        {
+          "type": 9,
+          "content": {
+            "version": "KqlParameterItem/1.0",
+            "parameters": [
+              {
+                "id": "timeRange",
+                "version": "KqlParameterItem/1.0",
+                "name": "TimeRange",
+                "type": 4,
+                "value": { "durationMs": 604800000 },
+                "typeSettings": { "selectableValues": [
+                  { "durationMs": 3600000    },
+                  { "durationMs": 86400000   },
+                  { "durationMs": 259200000  },
+                  { "durationMs": 604800000  },
+                  { "durationMs": 2592000000 }
+                ]},
+                "label": "Time Range"
+              },
+              {
+                "id": "environment",
+                "version": "KqlParameterItem/1.0",
+                "name": "Environment",
+                "type": 2,
+                "query": "OctopusAuditEvents_CL | where isnotempty(EnvironmentName) | summarize by EnvironmentName | sort by EnvironmentName asc",
+                "value": "value::all",
+                "typeSettings": { "additionalResourceOptions": ["value::all"], "showDefault": false },
+                "label": "Environment"
+              },
+              {
+                "id": "space",
+                "version": "KqlParameterItem/1.0",
+                "name": "Space",
+                "type": 2,
+                "query": "OctopusAuditEvents_CL | summarize by SpaceId | sort by SpaceId asc",
+                "value": "value::all",
+                "typeSettings": { "additionalResourceOptions": ["value::all"], "showDefault": false },
+                "label": "Space"
+              }
+            ],
+            "style": "above",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          "name": "parameters"
+        },
+        {
+          "type": 1,
+          "content": { "json": "## 📊 Overview KPIs" },
+          "name": "section-kpi"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where '{Environment}' == 'value::all' or EnvironmentName == '{Environment}'\n| where '{Space}' == 'value::all' or SpaceId == '{Space}'\n| summarize\n    TotalEvents        = count(),\n    TotalDeployments   = countif(EventType has 'Deployment' and EventType has 'Started'),\n    ProdDeployments    = countif(EventType has 'Deployment' and EventType has 'Started' and EnvironmentName matches regex '(?i)(prod|production|prd)'),\n    FailedDeployments  = countif(EventType has 'Deployment' and EventType has 'Failed'),\n    UniqueUsers        = dcount(Username),\n    ConfigChanges      = countif(EventType in~ (dynamic(['EnvironmentCreated','EnvironmentDeleted','VariableSetModified','DeploymentProcessModified','LifecycleModified','TeamModified'])))",
+            "size": 4,
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "tiles",
+            "tileSettings": {
+              "showBorder": true,
+              "titleContent": { "columnMatch": "Column" },
+              "leftContent":  { "columnMatch": "Value", "formatter": 12, "formatOptions": { "palette": "auto" } }
+            }
+          },
+          "name": "kpi-tiles"
+        },
+        {
+          "type": 1,
+          "content": { "json": "## 🚀 Deployment Activity" },
+          "name": "section-deploys"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where EventType has 'Deployment' and EventType has 'Started'\n| where '{Environment}' == 'value::all' or EnvironmentName == '{Environment}'\n| summarize Deployments = count() by bin(TimeGenerated, 1h), EnvironmentName\n| render timechart",
+            "size": 0,
+            "title": "Deployments Over Time by Environment",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "timechart"
+          },
+          "name": "deploy-timechart"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where EventType has 'Deployment' and EventType has 'Started'\n| where '{Environment}' == 'value::all' or EnvironmentName == '{Environment}'\n| summarize Deployments = count() by ProjectName\n| top 15 by Deployments desc\n| render barchart",
+            "size": 3,
+            "title": "Top 15 Projects by Deployments",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "barchart"
+          },
+          "name": "top-projects"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where EventType has 'Deployment'\n| where '{Environment}' == 'value::all' or EnvironmentName == '{Environment}'\n| summarize\n    Started  = countif(EventType has 'Started'),\n    Succeeded= countif(EventType has 'Succeeded' or EventType has 'Completed'),\n    Failed   = countif(EventType has 'Failed')\n    by ProjectName\n| extend SuccessRate = round(todouble(Succeeded) / todouble(Started + 0.0001) * 100, 1)\n| top 20 by Started desc\n| project ProjectName, Started, Succeeded, Failed, SuccessRate\n| sort by Failed desc",
+            "size": 1,
+            "title": "Deployment Success / Failure by Project",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "table",
+            "gridSettings": {
+              "formatters": [
+                { "columnMatch": "Failed",      "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [{ "operator": ">", "thresholdValue": "0", "representation": "redBright", "text": "{0}" }] } },
+                { "columnMatch": "SuccessRate",  "formatter": 8,  "formatOptions": { "palette": "greenRed",  "min": 0, "max": 100 } }
+              ]
+            }
+          },
+          "name": "deploy-table"
+        },
+        {
+          "type": 1,
+          "content": { "json": "## 👤 User Activity & Risk" },
+          "name": "section-users"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where '{Space}' == 'value::all' or SpaceId == '{Space}'\n| summarize\n    TotalActions      = count(),\n    Deployments       = countif(EventType has 'Deployment'),\n    ConfigChanges     = countif(EventType in~ (dynamic(['EnvironmentCreated','VariableSetModified','DeploymentProcessModified','TeamModified']))),\n    UniqueIPs         = dcount(IpAddress),\n    LastSeen          = max(TimeGenerated)\n    by Username\n| sort by TotalActions desc\n| top 25 by TotalActions",
+            "size": 1,
+            "title": "User Activity Summary (Top 25)",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "table",
+            "gridSettings": {
+              "formatters": [
+                { "columnMatch": "ConfigChanges", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [{ "operator": ">", "thresholdValue": "5", "representation": "orange", "text": "{0}" }, { "operator": ">", "thresholdValue": "20", "representation": "redBright", "text": "{0}" }] } },
+                { "columnMatch": "UniqueIPs",      "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [{ "operator": ">", "thresholdValue": "3", "representation": "yellow", "text": "{0}" }] } }
+              ]
+            }
+          },
+          "name": "user-table"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(IpAddress)\n| summarize AuthCount = count(), Users = make_set(Username, 20) by IpAddress\n| sort by AuthCount desc\n| top 20 by AuthCount",
+            "size": 1,
+            "title": "Top Source IPs (Auth Events)",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "table"
+          },
+          "name": "ip-table"
+        },
+        {
+          "type": 1,
+          "content": { "json": "## 🔐 Security Detections" },
+          "name": "section-detections"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where EventType has 'Deployment' and EventType has 'Started'\n| where EnvironmentName matches regex '(?i)(prod|production|prd)'\n| extend HourUTC = hourofday(TimeGenerated), IsWeekend = (dayofweek(TimeGenerated) == 0d or dayofweek(TimeGenerated) == 6d), IsOffHours = (hourofday(TimeGenerated) < 6 or hourofday(TimeGenerated) >= 20)\n| where IsWeekend or IsOffHours\n| project TimeGenerated, Username, ProjectName, EnvironmentName, HourUTC, IsWeekend\n| sort by TimeGenerated desc",
+            "size": 1,
+            "title": "⚠️ Production Deployments Outside Business Hours",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "table",
+            "gridSettings": {
+              "formatters": [
+                { "columnMatch": "TimeGenerated", "formatter": 6 },
+                { "columnMatch": "EnvironmentName", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [{ "operator": "Default", "representation": "redBright", "text": "{0}" }] } }
+              ]
+            }
+          },
+          "name": "off-hours-table"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "let SensitiveEventTypes = dynamic(['EnvironmentCreated','EnvironmentDeleted','VariableSetModified','DeploymentProcessModified','LifecycleCreated','LifecycleModified','LifecycleDeleted','MachineAdded','MachineDeleted','TeamModified','TeamCreated','TeamDeleted','RetentionPolicyModified']);\nOctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where EventType in~ (SensitiveEventTypes) or (EventType has 'Variable' and EnvironmentName matches regex '(?i)(prod|production|prd)')\n| extend IsProdScope = EnvironmentName matches regex '(?i)(prod|production|prd)'\n| project TimeGenerated, Username, EventType, EnvironmentName, ProjectName, IsProdScope, SpaceId\n| sort by TimeGenerated desc",
+            "size": 1,
+            "title": "⚠️ Configuration Tampering Events",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "table",
+            "gridSettings": {
+              "formatters": [
+                { "columnMatch": "IsProdScope", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [{ "operator": "==", "thresholdValue": "true", "representation": "redBright", "text": "PROD" }, { "operator": "Default", "representation": "blue", "text": "Non-Prod" }] } }
+              ]
+            }
+          },
+          "name": "config-tamper-table"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where EventType has 'ApiKey'\n| project TimeGenerated, Username, EventType, SpaceId, IpAddress\n| sort by TimeGenerated desc",
+            "size": 1,
+            "title": "API Key Lifecycle Events",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "table"
+          },
+          "name": "apikey-table"
+        },
+        {
+          "type": 1,
+          "content": { "json": "## 📈 Environment Risk Heatmap" },
+          "name": "section-heatmap"
+        },
+        {
+          "type": 3,
+          "content": {
+            "version": "KqlItem/1.0",
+            "query": "OctopusAuditEvents_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(EnvironmentName)\n| extend DayOfWeek = dayofweek(TimeGenerated) / 1d\n| summarize Events = count() by EnvironmentName, bin(TimeGenerated, 1d)\n| summarize AvgDailyEvents = avg(Events), TotalEvents = sum(Events), PeakDay = max(Events) by EnvironmentName\n| extend RiskScore = round((TotalEvents * 0.4 + PeakDay * 0.6), 0)\n| sort by RiskScore desc\n| top 15 by RiskScore",
+            "size": 1,
+            "title": "Environment Activity Risk Score",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "visualization": "table",
+            "gridSettings": {
+              "formatters": [
+                { "columnMatch": "RiskScore", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0 } }
+              ]
+            }
+          },
+          "name": "env-heatmap"
+        }
+      ],
+      "isLocked": false,
+      "fallbackResourceIds": ["[parameters('workbookSourceId')]"]
+    }
+  },
+  "resources": [
+    {
+      "type": "microsoft.insights/workbooks",
+      "apiVersion": "2022-04-01",
+      "name": "[variables('workbookId')]",
+      "location": "[parameters('location')]",
+      "kind": "shared",
+      "properties": {
+        "displayName": "[parameters('workbookDisplayName')]",
+        "serializedData": "[string(variables('serializedData'))]",
+        "version": "1.0",
+        "sourceId": "[parameters('workbookSourceId')]",
+        "category": "[parameters('workbookType')]"
+      }
+    }
+  ],
+  "outputs": {
+    "workbookId": {
+      "type": "string",
+      "value": "[variables('workbookId')]"
+    }
+  }
+}

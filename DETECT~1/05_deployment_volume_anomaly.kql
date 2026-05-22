@@ -1,0 +1,37 @@
+// ============================================================
+// RULE 05 — Deployment Volume Spike (Statistical Anomaly)
+// MITRE: T1072 (Software Deployment Tools) | Severity: Medium
+//
+// Uses series_decompose_anomalies() over a 30-day hourly
+// baseline to flag hours where deployment counts deviate
+// significantly from the expected pattern.  Score > 2.5
+// indicates a statistically significant spike.
+// ============================================================
+
+let AnomalyThreshold = 2.5;
+let BinSize          = 1h;
+
+OctopusAuditEvents_CL
+| where TimeGenerated >= ago(30d)
+| where EventType has "Deployment" and EventType has "Started"
+| make-series DeployCount = count() on TimeGenerated
+    from ago(30d) to now() step BinSize
+| extend (Anomalies, AnomalyScore, Baseline) =
+    series_decompose_anomalies(DeployCount, AnomalyThreshold, -1, 'linefit')
+| mv-expand
+    TimeGenerated to typeof(datetime),
+    DeployCount   to typeof(long),
+    Anomalies     to typeof(int),
+    AnomalyScore  to typeof(double),
+    Baseline      to typeof(double)
+| where Anomalies != 0 and TimeGenerated >= ago(1d)
+| project
+    TimeGenerated,
+    DeployCount,
+    Baseline      = round(Baseline, 1),
+    AnomalyScore  = round(AnomalyScore, 2),
+    Direction     = iff(Anomalies > 0, "Spike", "Drop"),
+    AlertName     = "Deployment volume statistical anomaly",
+    Severity      = iff(AnomalyScore > 4.0, "High", "Medium"),
+    MitreTechnique = "T1072"
+| sort by TimeGenerated desc

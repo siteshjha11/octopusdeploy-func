@@ -1,0 +1,22 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage":              "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME":         "python",
+    "FUNCTIONS_EXTENSION_VERSION":      "~4",
+
+    "OCTOPUS_SERVER_URL":               "https://your-octopus-instance.octopus.app",
+    "OCTOPUS_API_KEY":                  "API-xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "OCTOPUS_PAGE_SIZE":                "200",
+    "OCTOPUS_REQUEST_TIMEOUT_SEC":      "30",
+    "OCTOPUS_MAX_PAGES_PER_RUN":        "100",
+
+    "SENTINEL_DCE_ENDPOINT":            "https://<dce-name>.<region>.ingest.monitor.azure.com",
+    "SENTINEL_DCR_IMMUTABLE_ID":        "dcr-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "SENTINEL_STREAM_NAME":             "Custom-OctopusAuditEvents_CL",
+
+    "CHECKPOINT_STORAGE_ACCOUNT_URL":   "https://<storageaccount>.table.core.windows.net",
+
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  }
+}

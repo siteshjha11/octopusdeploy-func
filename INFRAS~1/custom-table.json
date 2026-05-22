@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "metadata": { "description": "Name of the existing Log Analytics workspace." }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/tables",
+      "apiVersion": "2022-10-01",
+      "name": "[concat(parameters('workspaceName'), '/OctopusAuditEvents_CL')]",
+      "properties": {
+        "retentionInDays": 90,
+        "totalRetentionInDays": 365,
+        "plan": "Analytics",
+        "schema": {
+          "name": "OctopusAuditEvents_CL",
+          "columns": [
+            { "name": "TimeGenerated",    "type": "datetime",  "description": "UTC time the event occurred in Octopus." },
+            { "name": "EventId",          "type": "string",    "description": "Octopus event GUID (Events-NNNNN)." },
+            { "name": "EventCategory",    "type": "string",    "description": "High-level category (Deployment, User, ApiKey, Environment, …)." },
+            { "name": "EventType",        "type": "string",    "description": "Full Octopus Category field (e.g. DeploymentStarted)." },
+            { "name": "UserId",           "type": "string",    "description": "Octopus user ID of the actor." },
+            { "name": "Username",         "type": "string",    "description": "Human-readable username of the actor." },
+            { "name": "ProjectName",      "type": "string",    "description": "Octopus project display name." },
+            { "name": "ProjectId",        "type": "string",    "description": "Octopus project ID (Projects-NNN)." },
+            { "name": "EnvironmentName",  "type": "string",    "description": "Target environment display name." },
+            { "name": "EnvironmentId",    "type": "string",    "description": "Octopus environment ID (Environments-NNN)." },
+            { "name": "SpaceId",          "type": "string",    "description": "Octopus space ID (Spaces-N)." },
+            { "name": "IpAddress",        "type": "string",    "description": "Source IP address (populated on auth events)." },
+            { "name": "Outcome",          "type": "string",    "description": "Interactive or Service." },
+            { "name": "ChangeDetails",    "type": "string",    "description": "JSON-serialised change detail blob." },
+            { "name": "RawEvent",         "type": "string",    "description": "Full raw Octopus API event payload (JSON)." }
+          ]
+        }
+      }
+    }
+  ]
+}

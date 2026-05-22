@@ -1,0 +1,58 @@
+// =============================================================================
+// RULE: Octopus Production Deployment Outside Business Hours
+// =============================================================================
+// Severity:      Medium
+// MITRE Tactic:  Execution
+// MITRE Tech:    T1072 - Software Deployment Tools
+// Query Period:  1h
+// Run Frequency: 5m
+// Alert Threshold: > 0
+//
+// Description:
+//   Detects successful deployments to production environments that occur
+//   outside of configured business hours (Mon–Fri 07:00–19:00 UTC).
+//   Adjust the hour range and environment name pattern to match your org.
+//
+//   Production environment naming examples:
+//     "Production", "Prod", "PROD", "prd-*"
+// =============================================================================
+
+let BusinessHourStart  = 7;    // 07:00 UTC
+let BusinessHourEnd    = 19;   // 19:00 UTC
+let ProductionPattern  = "(?i)^(prod|production|prd)";
+
+OctopusAuditEvents_CL
+| where TimeGenerated >= ago(1h)
+| where EventType startswith "Deployment"
+| where EnvironmentName matches regex ProductionPattern
+| where Outcome == "Success"
+| extend HourOfDay  = hourofday(TimeGenerated)
+| extend DayOfWeek  = dayofweek(TimeGenerated) / 1d  // 0=Sun, 6=Sat
+| where HourOfDay < BusinessHourStart
+       or HourOfDay >= BusinessHourEnd
+       or DayOfWeek == 0
+       or DayOfWeek == 6
+| project
+    TimeGenerated,
+    Username,
+    UserId,
+    ProjectName,
+    EnvironmentName,
+    ReleaseVersion,
+    DeploymentId,
+    IpAddress,
+    HourOfDay,
+    DayOfWeekNum    = DayOfWeek,
+    IsWeekend       = (DayOfWeek == 0 or DayOfWeek == 6),
+    SpaceId,
+    AlertSeverity   = "Medium",
+    AlertName       = "Octopus Production Deployment Outside Business Hours"
+| extend
+    Entities = bag_pack(
+        "Username", Username,
+        "Project",  ProjectName,
+        "Environment", EnvironmentName,
+        "Release",  ReleaseVersion
+    ),
+    MitreTactic     = "Execution",
+    MitreTechnique  = "T1072 - Software Deployment Tools"

@@ -1,0 +1,180 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "metadata": { "description": "Log Analytics / Sentinel workspace name." }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    }
+  },
+  "variables": {
+    "alertRules": [
+      {
+        "name": "octopus-apikey-new-ip",
+        "displayName": "Octopus — API Key Created and Used From New IP",
+        "description": "Detects an Octopus API key created and immediately used from an IP not seen in 30 days. MITRE T1078.",
+        "severity": "High",
+        "enabled": true,
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": ["InitialAccess", "CredentialAccess"],
+        "techniques": ["T1078"],
+        "query": "let LookbackDays = 30d;\nlet CorrelationWin = 1h;\nlet NewKeys = OctopusAuditEvents_CL\n    | where TimeGenerated >= ago(1d)\n    | where EventType has \"ApiKey\" and EventType has \"Created\"\n    | project KeyCreatedAt = TimeGenerated, CreatorUsername = Username, SpaceId;\nlet KnownIPs = OctopusAuditEvents_CL\n    | where TimeGenerated between (ago(LookbackDays) .. ago(1h))\n    | where isnotempty(IpAddress)\n    | summarize KnownIPSet = make_set(IpAddress) by Username;\nlet RecentUsage = OctopusAuditEvents_CL\n    | where TimeGenerated >= ago(1d)\n    | where isnotempty(IpAddress)\n    | project UsedAt = TimeGenerated, Username, IpAddress;\nNewKeys\n| join kind=inner (RecentUsage) on $left.CreatorUsername == $right.Username\n| where UsedAt between (KeyCreatedAt .. (KeyCreatedAt + CorrelationWin))\n| join kind=leftouter (KnownIPs) on $left.CreatorUsername == $right.Username\n| extend IsNewIP = not(set_has_element(KnownIPSet, IpAddress))\n| where IsNewIP == true\n| project TimeGenerated = UsedAt, Username = CreatorUsername, NewSourceIP = IpAddress, ApiKeyCreatedAt = KeyCreatedAt, SpaceId",
+        "entityMappings": [
+          { "entityType": "Account", "fieldMappings": [{ "identifier": "Name", "columnName": "Username" }] },
+          { "entityType": "IP",      "fieldMappings": [{ "identifier": "Address", "columnName": "NewSourceIP" }] }
+        ]
+      },
+      {
+        "name": "octopus-prod-off-hours",
+        "displayName": "Octopus — Production Deployment Outside Business Hours",
+        "description": "Deployment to a production environment outside Mon-Fri 06:00-20:00 UTC. MITRE T1072.",
+        "severity": "Medium",
+        "enabled": true,
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": ["Execution", "LateralMovement"],
+        "techniques": ["T1072"],
+        "query": "OctopusAuditEvents_CL\n| where TimeGenerated >= ago(1d)\n| where EventType has \"Deployment\" and EventType has \"Started\"\n| where EnvironmentName matches regex \"(?i)(prod|production|prd)\"\n| extend HourUTC = hourofday(TimeGenerated), IsWeekend = (dayofweek(TimeGenerated) == 0d or dayofweek(TimeGenerated) == 6d), IsOffHours = (hourofday(TimeGenerated) < 6 or hourofday(TimeGenerated) >= 20)\n| where IsWeekend or IsOffHours\n| project TimeGenerated, Username, ProjectName, EnvironmentName, HourUTC, IsWeekend, SpaceId",
+        "entityMappings": [
+          { "entityType": "Account", "fieldMappings": [{ "identifier": "Name", "columnName": "Username" }] }
+        ]
+      },
+      {
+        "name": "octopus-role-escalation-deploy",
+        "displayName": "Octopus — Role Escalation Followed by Immediate Deployment",
+        "description": "A user was granted an elevated role then deployed within 30 minutes. MITRE T1078.004.",
+        "severity": "High",
+        "enabled": true,
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": ["PrivilegeEscalation", "Execution"],
+        "techniques": ["T1078"],
+        "query": "let CorrelationWin = 30m;\nlet Escalations = OctopusAuditEvents_CL\n    | where TimeGenerated >= ago(1d)\n    | where EventType has \"UserRole\" and (EventType has \"Added\" or EventType has \"Assigned\")\n    | project EscalatedAt = TimeGenerated, TargetUser = Username, SpaceId;\nlet Deployments = OctopusAuditEvents_CL\n    | where TimeGenerated >= ago(1d)\n    | where EventType has \"Deployment\" and EventType has \"Started\"\n    | project DeployedAt = TimeGenerated, DeployUser = Username, ProjectName, EnvironmentName, SpaceId;\nEscalations\n| join kind=inner (Deployments) on $left.TargetUser == $right.DeployUser and $left.SpaceId == $right.SpaceId\n| where DeployedAt between (EscalatedAt .. (EscalatedAt + CorrelationWin))\n| extend MinutesToDeploy = datetime_diff('minute', DeployedAt, EscalatedAt)\n| project TimeGenerated = EscalatedAt, Username = TargetUser, DeployedAt, MinutesToDeploy, ProjectName, EnvironmentName, SpaceId",
+        "entityMappings": [
+          { "entityType": "Account", "fieldMappings": [{ "identifier": "Name", "columnName": "Username" }] }
+        ]
+      },
+      {
+        "name": "octopus-pipeline-bypass",
+        "displayName": "Octopus — Direct Production Deployment Without Prior Staging",
+        "description": "A release was deployed to Production with no corresponding Staging deployment in the last 24 hours. MITRE T1072.",
+        "severity": "High",
+        "enabled": true,
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P2D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": ["DefenseEvasion", "Execution"],
+        "techniques": ["T1072"],
+        "query": "let LookbackWindow = 24h;\nlet ProdDeploys = OctopusAuditEvents_CL\n    | where TimeGenerated >= ago(1d)\n    | where EventType has \"Deployment\" and EventType has \"Started\"\n    | where EnvironmentName matches regex \"(?i)(prod|production|prd)\"\n    | project ProdTime = TimeGenerated, Username, ProjectName, ProjectId, SpaceId, EnvironmentName;\nlet StagingDeploys = OctopusAuditEvents_CL\n    | where TimeGenerated >= ago(2d)\n    | where EventType has \"Deployment\" and EventType has \"Started\"\n    | where EnvironmentName matches regex \"(?i)(stag|uat|test|qa|preprod)\"\n    | summarize LastStagingDeploy = max(TimeGenerated) by ProjectId, SpaceId;\nProdDeploys\n| join kind=leftouter (StagingDeploys) on ProjectId, SpaceId\n| extend HadRecentStaging = isnotnull(LastStagingDeploy) and LastStagingDeploy >= (ProdTime - LookbackWindow)\n| where not(HadRecentStaging)\n| project TimeGenerated = ProdTime, Username, ProjectName, EnvironmentName, LastStagingDeploy, SpaceId",
+        "entityMappings": [
+          { "entityType": "Account", "fieldMappings": [{ "identifier": "Name", "columnName": "Username" }] }
+        ]
+      },
+      {
+        "name": "octopus-volume-anomaly",
+        "displayName": "Octopus — Deployment Volume Statistical Anomaly",
+        "description": "Hourly deployment count deviates significantly from 30-day baseline. MITRE T1072.",
+        "severity": "Medium",
+        "enabled": true,
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P30D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT2H",
+        "suppressionEnabled": false,
+        "tactics": ["Execution"],
+        "techniques": ["T1072"],
+        "query": "OctopusAuditEvents_CL\n| where TimeGenerated >= ago(30d)\n| where EventType has \"Deployment\" and EventType has \"Started\"\n| make-series DeployCount = count() on TimeGenerated from ago(30d) to now() step 1h\n| extend (Anomalies, AnomalyScore, Baseline) = series_decompose_anomalies(DeployCount, 2.5, -1, 'linefit')\n| mv-expand TimeGenerated to typeof(datetime), DeployCount to typeof(long), Anomalies to typeof(int), AnomalyScore to typeof(double), Baseline to typeof(double)\n| where Anomalies != 0 and TimeGenerated >= ago(1h)\n| project TimeGenerated, DeployCount, Baseline = round(Baseline,1), AnomalyScore = round(AnomalyScore,2), Direction = iff(Anomalies > 0, \"Spike\", \"Drop\")",
+        "entityMappings": []
+      },
+      {
+        "name": "octopus-config-tampering",
+        "displayName": "Octopus — Critical Configuration Tampering",
+        "description": "High-impact Octopus configuration modified: environments, lifecycles, variables, targets, or team membership. MITRE T1562/T1485.",
+        "severity": "High",
+        "enabled": true,
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": ["DefenseEvasion", "Impact"],
+        "techniques": ["T1562", "T1485"],
+        "query": "let SensitiveEventTypes = dynamic([\"EnvironmentCreated\",\"EnvironmentDeleted\",\"VariableSetModified\",\"DeploymentProcessModified\",\"LifecycleCreated\",\"LifecycleModified\",\"LifecycleDeleted\",\"MachineAdded\",\"MachineDeleted\",\"TeamModified\",\"TeamCreated\",\"TeamDeleted\",\"RetentionPolicyModified\"]);\nOctopusAuditEvents_CL\n| where TimeGenerated >= ago(1d)\n| where EventType in~ (SensitiveEventTypes) or (EventType has \"Variable\" and EnvironmentName matches regex \"(?i)(prod|production|prd)\")\n| extend IsProdScope = EnvironmentName matches regex \"(?i)(prod|production|prd)\"\n| project TimeGenerated, Username, EventType, EnvironmentName, ProjectName, IsProdScope, SpaceId, ChangeDetails",
+        "entityMappings": [
+          { "entityType": "Account", "fieldMappings": [{ "identifier": "Name", "columnName": "Username" }] }
+        ]
+      },
+      {
+        "name": "octopus-auth-new-ip",
+        "displayName": "Octopus — Authentication From Previously Unseen IP",
+        "description": "A user authenticated from an IP address not seen in 30 days. MITRE T1078.",
+        "severity": "Medium",
+        "enabled": true,
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P30D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": ["InitialAccess"],
+        "techniques": ["T1078"],
+        "query": "let AuthEvents = dynamic([\"UserLoggedIn\",\"UserAuthenticationSucceeded\",\"UserLoggedInWithSso\"]);\nlet KnownIPs = OctopusAuditEvents_CL\n    | where TimeGenerated between (ago(30d) .. ago(1h))\n    | where EventType in~ (AuthEvents) and isnotempty(IpAddress)\n    | summarize KnownIPSet = make_set(IpAddress, 500) by Username;\nOctopusAuditEvents_CL\n| where TimeGenerated >= ago(1h)\n| where EventType in~ (AuthEvents) and isnotempty(IpAddress)\n| join kind=leftouter (KnownIPs) on Username\n| extend IsNewIP = isempty(KnownIPSet) or not(set_has_element(KnownIPSet, IpAddress))\n| where IsNewIP\n| project TimeGenerated, Username, NewSourceIP = IpAddress, EventType, SpaceId, FirstSeenEver = isempty(KnownIPSet)",
+        "entityMappings": [
+          { "entityType": "Account", "fieldMappings": [{ "identifier": "Name", "columnName": "Username" }] },
+          { "entityType": "IP",      "fieldMappings": [{ "identifier": "Address", "columnName": "NewSourceIP" }] }
+        ]
+      }
+    ]
+  },
+  "resources": [
+    {
+      "copy": {
+        "name": "alertRulesCopy",
+        "count": "[length(variables('alertRules'))]"
+      },
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', variables('alertRules')[copyIndex()].name)]",
+      "location": "[parameters('location')]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName":         "[variables('alertRules')[copyIndex()].displayName]",
+        "description":         "[variables('alertRules')[copyIndex()].description]",
+        "severity":            "[variables('alertRules')[copyIndex()].severity]",
+        "enabled":             "[variables('alertRules')[copyIndex()].enabled]",
+        "query":               "[variables('alertRules')[copyIndex()].query]",
+        "queryFrequency":      "[variables('alertRules')[copyIndex()].queryFrequency]",
+        "queryPeriod":         "[variables('alertRules')[copyIndex()].queryPeriod]",
+        "triggerOperator":     "[variables('alertRules')[copyIndex()].triggerOperator]",
+        "triggerThreshold":    "[variables('alertRules')[copyIndex()].triggerThreshold]",
+        "suppressionDuration": "[variables('alertRules')[copyIndex()].suppressionDuration]",
+        "suppressionEnabled":  "[variables('alertRules')[copyIndex()].suppressionEnabled]",
+        "tactics":             "[variables('alertRules')[copyIndex()].tactics]",
+        "techniques":          "[variables('alertRules')[copyIndex()].techniques]",
+        "entityMappings":      "[variables('alertRules')[copyIndex()].entityMappings]"
+      }
+    }
+  ]
+}
